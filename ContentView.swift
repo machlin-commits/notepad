@@ -8,8 +8,6 @@ struct ContentView: View {
         VStack(spacing: 0) {
             TabStripView(viewModel: viewModel)
             Divider()
-            PrimaryMenuBarView(viewModel: viewModel)
-            Divider()
             if let document = viewModel.selectedDocument {
                 FormattingBarView(document: document)
                 Divider()
@@ -19,6 +17,7 @@ struct ContentView: View {
                         selectionRequest: viewModel.editorSelectionRequest,
                         onSelectionHandled: { viewModel.editorSelectionRequest = nil }
                     )
+                    .modifier(DocumentWindowTitle(document: document))
                     if viewModel.isFindPresented {
                         FindReplaceView(viewModel: viewModel)
                             .padding(.top, 10)
@@ -49,68 +48,17 @@ struct ContentView: View {
                 }
             }
         }
-        .modifier(CommandReceiver(viewModel: viewModel))
+        .focusedSceneValue(\.editorViewModel, viewModel)
         .modifier(EditorAlerts(viewModel: viewModel))
     }
 }
 
-struct PrimaryMenuBarView: View {
-    @ObservedObject var viewModel: EditorViewModel
+// Native macOS tabs use the window title, independently of our custom tab strip.
+struct DocumentWindowTitle: ViewModifier {
+    @ObservedObject var document: DocumentModel
 
-    var body: some View {
-        HStack(spacing: 18) {
-            Menu("File") {
-                Button("New Tab") { viewModel.newTab() }
-                    .keyboardShortcut("t")
-                Button("Open…") { viewModel.open() }
-                    .keyboardShortcut("o")
-                Divider()
-                Button("Save") { viewModel.save() }
-                    .keyboardShortcut("s")
-                Button("Save As…") { viewModel.saveAs() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                Divider()
-                Button("Print…") { viewModel.printDocument() }
-                    .keyboardShortcut("p")
-            }
-            Menu("Edit") {
-                Button("Find…") { viewModel.showFind() }
-                    .keyboardShortcut("f")
-                Button("Find and Replace…") { viewModel.showFind(replace: true) }
-                    .keyboardShortcut("f", modifiers: [.command, .option])
-                Button("Go to Line…") { viewModel.goToLine() }
-                    .keyboardShortcut("l")
-                Divider()
-                Button("Insert Date and Time") { viewModel.insertDateTime() }
-            }
-            Menu("View") {
-                Button(viewModel.selectedDocument?.wordWrap == true ? "Disable Word Wrap" : "Enable Word Wrap") {
-                    viewModel.selectedDocument?.wordWrap.toggle()
-                }
-                Divider()
-                Button("Zoom In") {
-                    guard let document = viewModel.selectedDocument else { return }
-                    document.zoom = min(document.zoom + 0.1, 5)
-                }
-                Button("Zoom Out") {
-                    guard let document = viewModel.selectedDocument else { return }
-                    document.zoom = max(document.zoom - 0.1, 0.5)
-                }
-                Button("Actual Size") {
-                    viewModel.selectedDocument?.zoom = 1
-                }
-            }
-            Spacer()
-            Button("Save") {
-                viewModel.save()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(viewModel.selectedDocument == nil)
-        }
-        .menuStyle(.borderlessButton)
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .background(Color(nsColor: .windowBackgroundColor))
+    func body(content: Content) -> some View {
+        content.navigationTitle(document.tabTitle)
     }
 }
 
@@ -251,8 +199,7 @@ struct TabStripView: View {
                 HStack(spacing: 6) {
                     ForEach(viewModel.documents) { document in
                         DocumentTabView(
-                            title: document.tabTitle,
-                            isDirty: document.isDirty,
+                            document: document,
                             isSelected: viewModel.selectedDocumentID == document.id,
                             select: { viewModel.selectedDocumentID = document.id },
                             close: { viewModel.closeTab(document.id) }
@@ -278,8 +225,9 @@ struct TabStripView: View {
 }
 
 struct DocumentTabView: View {
-    let title: String
-    let isDirty: Bool
+    @ObservedObject var document: DocumentModel
+    private var title: String { document.tabTitle }
+    private var isDirty: Bool { document.isDirty }
     let isSelected: Bool
     let select: () -> Void
     let close: () -> Void
@@ -437,23 +385,6 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .frame(height: 30)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-}
-
-struct CommandReceiver: ViewModifier {
-    @ObservedObject var viewModel: EditorViewModel
-
-    func body(content: Content) -> some View {
-        content
-            .onReceive(NotificationCenter.default.publisher(for: .notepadNewTab)) { _ in viewModel.newTab() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadOpen)) { _ in viewModel.open() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadSave)) { _ in viewModel.save() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadSaveAs)) { _ in viewModel.saveAs() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadFind)) { _ in viewModel.showFind() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadReplace)) { _ in viewModel.showFind(replace: true) }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadGoToLine)) { _ in viewModel.goToLine() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadInsertDateTime)) { _ in viewModel.insertDateTime() }
-            .onReceive(NotificationCenter.default.publisher(for: .notepadPrint)) { _ in viewModel.printDocument() }
     }
 }
 

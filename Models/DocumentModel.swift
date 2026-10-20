@@ -63,12 +63,32 @@ struct DocumentSnapshot: Codable {
     let encoding: TextEncoding
     let lineEnding: LineEnding
     let date: Date
+    var richTextData: Data? = nil
 }
 
 @MainActor
 final class DocumentModel: ObservableObject, Identifiable {
     let id: UUID
-    @Published var text: String
+    @Published var attributedText: NSAttributedString
+    var text: String { attributedText.string }
+
+    func replaceCharacters(in range: NSRange, with value: String) {
+        let updated = NSMutableAttributedString(attributedString: attributedText)
+        updated.replaceCharacters(in: range, with: value)
+        attributedText = updated
+    }
+
+    var containsImages: Bool {
+        var found = false
+        attributedText.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributedText.length)) { value, _, stop in
+            if value != nil { found = true; stop.pointee = true }
+        }
+        return found
+    }
+
+    var usesRTFD: Bool {
+        containsImages || fileURL?.pathExtension.lowercased() == "rtfd"
+    }
     @Published var fileURL: URL?
     @Published var displayName: String
     @Published var encoding: TextEncoding
@@ -92,7 +112,7 @@ final class DocumentModel: ObservableObject, Identifiable {
         isDirty: Bool = false
     ) {
         self.id = id
-        self.text = text
+        self.attributedText = NSAttributedString(string: text)
         self.fileURL = fileURL
         self.displayName = displayName
         self.encoding = encoding
@@ -101,12 +121,20 @@ final class DocumentModel: ObservableObject, Identifiable {
     }
 
     var tabTitle: String {
-        guard fileURL == nil else { return displayName }
-        let firstLine = text.components(separatedBy: .newlines)
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let fileURL { return fileURL.lastPathComponent }
+        let firstLine = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
         guard !firstLine.isEmpty else { return "Untitled" }
         return String(firstLine.prefix(40))
+    }
+
+    var suggestedFileName: String {
+        if let fileURL { return fileURL.lastPathComponent }
+        let name = tabTitle.components(separatedBy: CharacterSet(charactersIn: "/:"))
+            .joined(separator: "-")
+        return name + (usesRTFD ? ".rtfd" : ".txt")
     }
 
     var lineAndColumn: (Int, Int) {
@@ -123,6 +151,7 @@ final class DocumentModel: ObservableObject, Identifiable {
 
     var snapshot: DocumentSnapshot {
         DocumentSnapshot(id: id, text: text, fileURL: fileURL, displayName: displayName,
-                         encoding: encoding, lineEnding: lineEnding, date: Date())
+                         encoding: encoding, lineEnding: lineEnding, date: Date(),
+                         richTextData: containsImages ? attributedText.rtfd(from: NSRange(location: 0, length: attributedText.length), documentAttributes: [:]) : nil)
     }
 }

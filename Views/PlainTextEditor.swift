@@ -11,6 +11,8 @@ struct PlainTextEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        context.coordinator.isUpdatingView = true
+        defer { context.coordinator.isUpdatingView = false }
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = !document.wordWrap
@@ -19,8 +21,8 @@ struct PlainTextEditor: NSViewRepresentable {
 
         let textView = NSTextView()
         textView.delegate = context.coordinator
-        textView.isRichText = false
-        textView.importsGraphics = false
+        textView.isRichText = true
+        textView.importsGraphics = true
         textView.allowsUndo = true
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.isContinuousSpellCheckingEnabled = true
@@ -30,7 +32,7 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.font = document.font.withSize(document.font.pointSize * document.zoom)
         textView.textColor = document.textColor
         textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.string = document.text
+        textView.textStorage?.setAttributedString(document.attributedText)
         configureWrapping(textView)
         scrollView.documentView = textView
         context.coordinator.textView = textView
@@ -39,12 +41,18 @@ struct PlainTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        // AppKit sends delegate callbacks synchronously while applying model changes.
+        context.coordinator.isUpdatingView = true
+        defer { context.coordinator.isUpdatingView = false }
+        let changedDocument = context.coordinator.document.id != document.id
         context.coordinator.document = document
-        if textView.string != document.text {
-            let selection = textView.selectedRange()
-            textView.string = document.text
+        if changedDocument || context.coordinator.renderedContent !== document.attributedText {
+            if changedDocument { textView.undoManager?.removeAllActions() }
+            let selection = changedDocument ? document.selectedRange : textView.selectedRange()
+            textView.textStorage?.setAttributedString(document.attributedText)
             textView.setSelectedRange(NSRange(location: min(selection.location, textView.string.utf16.count), length: 0))
         }
+        context.coordinator.renderedContent = document.attributedText
         textView.font = document.font.withSize(document.font.pointSize * document.zoom)
         textView.textColor = document.textColor
         scrollView.hasHorizontalScroller = !document.wordWrap
@@ -80,19 +88,26 @@ struct PlainTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var document: DocumentModel
         weak var textView: NSTextView?
+        var renderedContent: NSAttributedString?
+        var isUpdatingView = false
 
         init(document: DocumentModel) {
             self.document = document
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView else { return }
-            document.text = textView.string
+            guard !isUpdatingView, let textView else { return }
+            let content = NSAttributedString(attributedString: textView.attributedString())
+            renderedContent = content
+            document.attributedText = content
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView else { return }
-            document.selectedRange = textView.selectedRange()
+            guard !isUpdatingView, let textView else { return }
+            let selection = textView.selectedRange()
+            if document.selectedRange != selection {
+                document.selectedRange = selection
+            }
         }
     }
 }

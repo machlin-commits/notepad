@@ -56,6 +56,7 @@ final class EditorViewModel: ObservableObject {
                                          displayName: url.lastPathComponent,
                                          encoding: decoded.encoding,
                                          lineEnding: decoded.lineEnding)
+            document.attributedText = try FileService.readRichText(from: url) ?? NSAttributedString(string: decoded.text)
             document.bookmarkData = FileService.bookmark(for: url)
             documents.append(document)
             selectedDocumentID = document.id
@@ -69,7 +70,7 @@ final class EditorViewModel: ObservableObject {
 
     func save() {
         guard let document = selectedDocument else { return }
-        if let url = document.fileURL {
+        if let url = document.fileURL, !document.containsImages || url.pathExtension.lowercased() == "rtfd" {
             save(document, to: url)
         } else {
             saveAs()
@@ -78,7 +79,7 @@ final class EditorViewModel: ObservableObject {
 
     func saveAs() {
         guard let document = selectedDocument,
-              let url = FileService.savePanel(suggestedName: document.displayName) else { return }
+              let url = FileService.savePanel(suggestedName: document.suggestedFileName, richText: document.usesRTFD) else { return }
         save(document, to: url)
     }
 
@@ -154,7 +155,7 @@ final class EditorViewModel: ObservableObject {
         guard let document = selectedDocument, matchCount > 0 else { return }
         let range = document.selectedRange
         guard range.location + range.length <= (document.text as NSString).length else { return }
-        document.text = (document.text as NSString).replacingCharacters(in: range, with: replaceText)
+        document.replaceCharacters(in: range, with: replaceText)
         document.isDirty = true
         updateMatches()
         findNext()
@@ -163,9 +164,9 @@ final class EditorViewModel: ObservableObject {
     func replaceAll() {
         guard let document = selectedDocument, !findText.isEmpty else { return }
         let ranges = ranges().reversed()
-        var value = document.text as NSString
-        for range in ranges { value = value.replacingCharacters(in: range, with: replaceText) as NSString }
-        document.text = value as String
+        let updated = NSMutableAttributedString(attributedString: document.attributedText)
+        for range in ranges { updated.replaceCharacters(in: range, with: replaceText) }
+        document.attributedText = updated
         document.isDirty = true
         updateMatches()
     }
@@ -199,7 +200,7 @@ final class EditorViewModel: ObservableObject {
         guard let document = selectedDocument else { return }
         let value = Date().formatted(date: .numeric, time: .shortened)
         let range = document.selectedRange
-        document.text = (document.text as NSString).replacingCharacters(in: range, with: value)
+        document.replaceCharacters(in: range, with: value)
         let caret = NSRange(location: range.location + value.utf16.count, length: 0)
         document.selectedRange = caret
         editorSelectionRequest = caret
@@ -220,7 +221,7 @@ final class EditorViewModel: ObservableObject {
         guard let document = selectedDocument, let url = document.fileURL else { return }
         do {
             let decoded = try FileService.read(from: url)
-            document.text = decoded.text
+            document.attributedText = try FileService.readRichText(from: url) ?? NSAttributedString(string: decoded.text)
             document.encoding = decoded.encoding
             document.lineEnding = decoded.lineEnding
             document.isDirty = false
@@ -263,10 +264,16 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func observe(_ document: DocumentModel) {
-        document.$text.dropFirst().sink { [weak self, weak document] _ in
+        document.$attributedText.dropFirst().sink { [weak self, weak document] content in
             guard let self, let document else { return }
             document.isDirty = true
-            RecoveryService.shared.schedule(document.snapshot)
+            // Published values arrive before the stored property changes.
+            let snapshot = DocumentSnapshot(id: document.id, text: content.string, fileURL: document.fileURL,
+                                        displayName: document.displayName, encoding: document.encoding,
+                                        lineEnding: document.lineEnding, date: Date(),
+                                        richTextData: content.rtfd(from: NSRange(location: 0, length: content.length),
+                                                                   documentAttributes: [:]))
+            RecoveryService.shared.schedule(snapshot)
             if self.selectedDocumentID == document.id { self.updateMatches() }
         }.store(in: &cancellables)
     }
@@ -301,6 +308,10 @@ final class EditorViewModel: ObservableObject {
                                              encoding: snapshot.encoding,
                                              lineEnding: snapshot.lineEnding,
                                              isDirty: true)
+                if let data = snapshot.richTextData,
+                   let content = NSAttributedString(rtfd: data, documentAttributes: nil) {
+                    document.attributedText = content
+                }
                 documents.append(document)
                 observe(document)
                 if document.fileURL != nil { watch(document) }
@@ -309,6 +320,9 @@ final class EditorViewModel: ObservableObject {
                                              displayName: tab.displayName,
                                              encoding: decoded.encoding,
                                              lineEnding: decoded.lineEnding)
+                if let richText = try? FileService.readRichText(from: url) {
+                    document.attributedText = richText
+                }
                 document.bookmarkData = tab.bookmarkData
                 documents.append(document)
                 observe(document)

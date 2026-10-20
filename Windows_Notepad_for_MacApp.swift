@@ -19,11 +19,12 @@ struct Windows_Notepad_for_MacApp: App {
 
 struct NotepadCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.editorViewModel) private var viewModel
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Tab") {
-                NotificationCenter.default.post(name: .notepadNewTab, object: nil)
+                viewModel?.newTab()
             }
             .keyboardShortcut("t")
 
@@ -35,53 +36,81 @@ struct NotepadCommands: Commands {
             Divider()
 
             Button("Open…") {
-                NotificationCenter.default.post(name: .notepadOpen, object: nil)
+                viewModel?.open()
             }
             .keyboardShortcut("o")
         }
 
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
-                NotificationCenter.default.post(name: .notepadSave, object: nil)
+                viewModel?.save()
             }
             .keyboardShortcut("s")
 
             Button("Save As…") {
-                NotificationCenter.default.post(name: .notepadSaveAs, object: nil)
+                viewModel?.saveAs()
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
         }
 
         CommandGroup(after: .saveItem) {
             Button("Print…") {
-                NotificationCenter.default.post(name: .notepadPrint, object: nil)
+                viewModel?.printDocument()
             }
             .keyboardShortcut("p")
+        }
+
+        CommandGroup(after: .toolbar) {
+            Button("Word Wrap") { viewModel?.selectedDocument?.wordWrap.toggle() }
+            Divider()
+            Button("Zoom In") {
+                guard let document = viewModel?.selectedDocument else { return }
+                document.zoom = min(document.zoom + 0.1, 5)
+            }
+            .keyboardShortcut("+")
+            Button("Zoom Out") {
+                guard let document = viewModel?.selectedDocument else { return }
+                document.zoom = max(document.zoom - 0.1, 0.5)
+            }
+            .keyboardShortcut("-")
+            Button("Actual Size") { viewModel?.selectedDocument?.zoom = 1 }
+                .keyboardShortcut("0")
         }
 
         CommandGroup(after: .textEditing) {
             Divider()
             Button("Find…") {
-                NotificationCenter.default.post(name: .notepadFind, object: nil)
+                viewModel?.showFind()
             }
             .keyboardShortcut("f")
 
             Button("Find and Replace…") {
-                NotificationCenter.default.post(name: .notepadReplace, object: nil)
+                viewModel?.showFind(replace: true)
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
 
             Button("Go to Line…") {
-                NotificationCenter.default.post(name: .notepadGoToLine, object: nil)
+                viewModel?.goToLine()
             }
             .keyboardShortcut("l")
 
             Divider()
 
             Button("Insert Date and Time") {
-                NotificationCenter.default.post(name: .notepadInsertDateTime, object: nil)
+                viewModel?.insertDateTime()
             }
             .keyboardShortcut(KeyEquivalent(Character("\u{F708}")), modifiers: [])
         }
+    }
+}
+
+private struct EditorViewModelKey: FocusedValueKey {
+    typealias Value = EditorViewModel
+}
+
+extension FocusedValues {
+    var editorViewModel: EditorViewModel? {
+        get { self[EditorViewModelKey.self] }
+        set { self[EditorViewModelKey.self] = newValue }
     }
 }
